@@ -6,3 +6,5 @@ button.onclick = () => {
 };
 
 document.body.appendChild(button);
+
+// Double checking workflow
