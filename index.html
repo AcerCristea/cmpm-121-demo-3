@@ -3,11 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geocoin Carrier Game</title>
   </head>
   <body>
     <div id="app">
-      <!-- todo -->
+      <!-- Control panel for player navigation and actions -->
+      <div id="controlPanel">
+        <button id="sensor" title="Sensor">🌐</button>
+        <button id="north" title="Move North">⬆️</button>
+        <button id="south" title="Move South">⬇️</button>
+        <button id="west" title="Move West">⬅️</button>
+        <button id="east" title="Move East">➡️</button>
+        <button id="reset" title="Reset Position">🚮</button>
+      </div>
+
+      <!-- Panel to display the player's current status -->
+      <div id="statusPanel">Coins: 0</div>
+
+      <!-- Map area for showing player and cache locations -->
+      <div id="map"></div>
     </div>
+    <!-- Include the main script for game functionality -->
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
