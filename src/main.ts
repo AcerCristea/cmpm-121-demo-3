@@ -45,7 +45,7 @@ class Board {
     return this.knownCells.get(key)!;
   }
 
-  // Convert a geographical point into a grid cell anchored at Null Island
+  // Grid cell anchored at Null Island
   public getCellForPoint(point: leaflet.LatLng): Cell {
     const relativeLat = point.lat - NULL_ISLAND.lat;
     const relativeLng = point.lng - NULL_ISLAND.lng;
@@ -54,7 +54,7 @@ class Board {
     return this.getCanonicalCell({ i, j });
   }
 
-  // Get the bounds of a cell in geographical coordinates
+  // Get the bounds of a cell in coordinates
   public getCellBounds(cell: Cell): leaflet.LatLngBounds {
     const { i, j } = cell;
     const sw = leaflet.latLng(i * TILE_DEGREES, j * TILE_DEGREES); // Southwest corner
