@@ -12,12 +12,12 @@ interface Cell {
 
 interface Coin {
   cell: Cell;
-  serial: number;
+  serial: number; // Unique identifier
 }
 
 interface Cache {
   cell: Cell;
-  coins: Coin[];
+  coins: Coin[]; // Coins available in this cache
 }
 
 // Constants
@@ -27,6 +27,8 @@ const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 0.0001; // Size of each cell in degrees
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
+
+const playerPosition = OAKES_CLASSROOM; // Initaial starting position
 
 class Board {
   private readonly knownCells: Map<string, Cell> = new Map();
@@ -47,10 +49,8 @@ class Board {
 
   // Grid cell anchored at Null Island
   public getCellForPoint(point: leaflet.LatLng): Cell {
-    const relativeLat = point.lat - NULL_ISLAND.lat;
-    const relativeLng = point.lng - NULL_ISLAND.lng;
-    const i = Math.floor(relativeLat / TILE_DEGREES);
-    const j = Math.floor(relativeLng / TILE_DEGREES);
+    const i = Math.floor((point.lat - NULL_ISLAND.lat) / TILE_DEGREES);
+    const j = Math.floor((point.lng - NULL_ISLAND.lng) / TILE_DEGREES);
     return this.getCanonicalCell({ i, j });
   }
 
@@ -65,12 +65,12 @@ class Board {
 
 // Main game logic (map initialization, event listeners, cache management)
 const map = leaflet.map("map", {
-  center: OAKES_CLASSROOM, // Centered at Oakes Classroom
+  center: playerPosition,
   zoom: GAMEPLAY_ZOOM_LEVEL,
-  minZoom: GAMEPLAY_ZOOM_LEVEL,
+  minZoom: 6,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
+  zoomControl: true,
+  scrollWheelZoom: true,
 });
 
 leaflet
@@ -81,7 +81,7 @@ leaflet
   })
   .addTo(map);
 
-const playerMarker = leaflet.marker(OAKES_CLASSROOM);
+const playerMarker = leaflet.marker(playerPosition);
 playerMarker.bindTooltip("You're Here!");
 playerMarker.addTo(map);
 
@@ -111,6 +111,7 @@ function updatePopupCoinList(popupDiv: HTMLDivElement, coins: Coin[]) {
   coinListDiv.innerHTML = coinList;
 }
 
+// Displays a cache on the map with an interactive popup
 function displayCacheOnMap(cache: Cache) {
   const bounds = board.getCellBounds(cache.cell);
   const rect = leaflet.rectangle(bounds).addTo(map);
@@ -191,18 +192,17 @@ document.addEventListener("player-inventory-changed", (e) => {
   statusPanel.innerHTML = `Coins: ${event.detail.coins}`;
 });
 
-// Compute the Cell indices for Oakes College classroom
-const oakesCell = board.getCellForPoint(OAKES_CLASSROOM);
+// Generate nearby caches centered around playerPosition
+const startCell = board.getCellForPoint(playerPosition);
 
-// Generate nearby caches centered around Oakes College
 for (
-  let i = oakesCell.i - NEIGHBORHOOD_SIZE;
-  i <= oakesCell.i + NEIGHBORHOOD_SIZE;
+  let i = startCell.i - NEIGHBORHOOD_SIZE;
+  i <= startCell.i + NEIGHBORHOOD_SIZE;
   i++
 ) {
   for (
-    let j = oakesCell.j - NEIGHBORHOOD_SIZE;
-    j <= oakesCell.j + NEIGHBORHOOD_SIZE;
+    let j = startCell.j - NEIGHBORHOOD_SIZE;
+    j <= startCell.j + NEIGHBORHOOD_SIZE;
     j++
   ) {
     const cell = board.getCanonicalCell({ i, j });
