@@ -15,9 +15,32 @@ interface Coin {
   serial: number; // Unique identifier
 }
 
-interface Cache {
+// Allows the state of the object to be saved and restored
+interface Momento<T> {
+  toMomento(): T;
+  fromMomento(momento: T): void;
+}
+
+class Cache implements Momento<string> {
   cell: Cell;
-  coins: Coin[]; // Coins available in this cache
+  coins: Coin[];
+
+  constructor(cell: Cell, coins: Coin[] = []) {
+    this.cell = cell;
+    this.coins = coins;
+  }
+
+  // Encode the state of the cache into a string
+  public toMomento(): string {
+    return JSON.stringify({ cell: this.cell, coins: this.coins });
+  }
+
+  // Restore the state of the cache from a string
+  public fromMomento(momento: string): void {
+    const data = JSON.parse(momento);
+    this.cell = data.cell;
+    this.coins = data.coins;
+  }
 }
 
 // Constants
@@ -28,7 +51,90 @@ const TILE_DEGREES = 0.0001; // Size of each cell in degrees
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
-const playerPosition = OAKES_CLASSROOM; // Initaial starting position
+let playerPosition = OAKES_CLASSROOM; // Initaial starting position
+
+// ChatGPT helped come up with the idea of a CacheManager and how to implement it using a Momento interface
+
+class CacheManager {
+  private cacheStates: Map<string, string> = new Map(); // Stores cache states as mementos
+  private activeCaches: Map<string, Cache> = new Map(); // Active caches visible on the map
+
+  constructor(
+    private readonly board: Board,
+    private readonly map: leaflet.Map,
+  ) {}
+
+  // Get key for a cell
+  private getCellKey(cell: Cell): string {
+    return `${cell.i},${cell.j}`;
+  }
+
+  // Regenerate caches near the player's position
+  public updateVisibleCaches(
+    playerPosition: leaflet.LatLng,
+    visibilityRadius: number,
+  ) {
+    const playerCell = this.board.getCellForPoint(playerPosition);
+
+    // Define bounds of visible cells
+    const minI = playerCell.i - visibilityRadius;
+    const maxI = playerCell.i + visibilityRadius;
+    const minJ = playerCell.j - visibilityRadius;
+    const maxJ = playerCell.j + visibilityRadius;
+
+    // Iterate through visible cells
+    for (let i = minI; i <= maxI; i++) {
+      for (let j = minJ; j <= maxJ; j++) {
+        const cell = this.board.getCanonicalCell({ i, j });
+        const key = this.getCellKey(cell);
+
+        if (!this.activeCaches.has(key)) {
+          // Restore state if memento exists, otherwise generate a new cache
+          let cache: Cache | null = null;
+          if (this.cacheStates.has(key)) {
+            cache = new Cache(cell);
+            cache.fromMomento(this.cacheStates.get(key)!);
+          } else {
+            // Generate new cache
+            const generatedCache = generateCache(cell);
+            if (generatedCache) {
+              cache = new Cache(generatedCache.cell, generatedCache.coins);
+            }
+          }
+          if (cache) {
+            this.activeCaches.set(key, cache);
+            displayCacheOnMap(cache);
+          }
+        }
+      }
+    }
+
+    // Had to ask chatGPT how to remove caches as they become not visible.
+    // Remove caches outside of the visibility radius
+    const cellsToRemove: string[] = [];
+    this.activeCaches.forEach((cache, key) => {
+      const { i, j } = cache.cell;
+      if (i < minI || i > maxI || j < minJ || j > maxJ) {
+        this.cacheStates.set(key, cache.toMomento());
+        cellsToRemove.push(key);
+      }
+    });
+
+    // Cleanup removed caches
+    cellsToRemove.forEach((key) => {
+      const cache = this.activeCaches.get(key);
+      this.map.eachLayer((layer: leaflet.Layer) => {
+        if (
+          layer instanceof leaflet.Rectangle &&
+          layer.getBounds().equals(this.board.getCellBounds(cache!.cell))
+        ) {
+          this.map.removeLayer(layer);
+        }
+      });
+      this.activeCaches.delete(key);
+    });
+  }
+}
 
 class Board {
   private readonly knownCells: Map<string, Cell> = new Map();
@@ -89,6 +195,8 @@ const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 let playerCoins = 0;
 const statusPanel = document.getElementById("statusPanel")!;
 
+const cacheManager = new CacheManager(board, map);
+
 // Use luck function to determine cache generation and coin count
 function generateCache(cell: Cell): Cache | null {
   if (luck(`${cell.i},${cell.j}`) < CACHE_SPAWN_PROBABILITY) {
@@ -97,7 +205,7 @@ function generateCache(cell: Cell): Cache | null {
       cell,
       serial,
     }));
-    return { cell, coins };
+    return new Cache(cell, coins);
   }
   return null;
 }
@@ -140,6 +248,15 @@ function displayCacheOnMap(cache: Cache) {
 }
 
 // Cache Interaction
+
+function updateCoinUI(popupDiv: HTMLDivElement, cache: Cache) {
+  const coinCountElement = popupDiv.querySelector("#coin-count");
+  if (coinCountElement) {
+    coinCountElement.textContent = `Coins: ${cache.coins.length}`;
+  }
+  updatePopupCoinList(popupDiv, cache.coins);
+}
+
 function collectCoin(cache: Cache, popupDiv: HTMLDivElement) {
   if (cache.coins.length > 0) {
     cache.coins.pop();
@@ -149,33 +266,20 @@ function collectCoin(cache: Cache, popupDiv: HTMLDivElement) {
         detail: { coins: playerCoins },
       }),
     );
-    const coinCountElement = popupDiv.querySelector("#coin-count");
-    if (coinCountElement) {
-      coinCountElement.textContent = `Coins: ${cache.coins.length}`;
-    } else {
-      console.error("coin-count element not found in popupDiv");
-    }
-    updatePopupCoinList(popupDiv, cache.coins);
+    updateCoinUI(popupDiv, cache);
   }
 }
 
 function depositCoin(cache: Cache, popupDiv: HTMLDivElement) {
   if (playerCoins > 0) {
-    const newCoin: Coin = { cell: cache.cell, serial: cache.coins.length };
+    cache.coins.push({ cell: cache.cell, serial: cache.coins.length });
     playerCoins--;
-    cache.coins.push(newCoin);
     document.dispatchEvent(
       new CustomEvent("player-inventory-changed", {
         detail: { coins: playerCoins },
       }),
     );
-    const coinCountElement = popupDiv.querySelector("#coin-count");
-    if (coinCountElement) {
-      coinCountElement.textContent = `Coins: ${cache.coins.length}`;
-    } else {
-      console.error("coin-count element not found in popupDiv");
-    }
-    updatePopupCoinList(popupDiv, cache.coins);
+    updateCoinUI(popupDiv, cache);
   }
 }
 
@@ -192,21 +296,38 @@ document.addEventListener("player-inventory-changed", (e) => {
   statusPanel.innerHTML = `Coins: ${event.detail.coins}`;
 });
 
-// Generate nearby caches centered around playerPosition
-const startCell = board.getCellForPoint(playerPosition);
+// Movement step size (in degrees)
+const MOVEMENT_STEP = TILE_DEGREES;
 
-for (
-  let i = startCell.i - NEIGHBORHOOD_SIZE;
-  i <= startCell.i + NEIGHBORHOOD_SIZE;
-  i++
-) {
-  for (
-    let j = startCell.j - NEIGHBORHOOD_SIZE;
-    j <= startCell.j + NEIGHBORHOOD_SIZE;
-    j++
-  ) {
-    const cell = board.getCanonicalCell({ i, j });
-    const cache = generateCache(cell);
-    if (cache) displayCacheOnMap(cache);
-  }
+// Update the caches to spawn at playerPosition
+cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
+
+// Update player position and marker
+function updatePlayerPosition(latChange: number, lngChange: number) {
+  playerPosition = leaflet.latLng(
+    playerPosition.lat + latChange,
+    playerPosition.lng + lngChange,
+  );
+
+  playerMarker.setLatLng(playerPosition);
+  map.panTo(playerPosition); // Keep the map centered on the player
+
+  cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
 }
+
+// Event listeners for directional buttons
+document.getElementById("north")!.addEventListener("click", () => {
+  updatePlayerPosition(MOVEMENT_STEP, 0); // Move north
+});
+
+document.getElementById("south")!.addEventListener("click", () => {
+  updatePlayerPosition(-MOVEMENT_STEP, 0); // Move south
+});
+
+document.getElementById("west")!.addEventListener("click", () => {
+  updatePlayerPosition(0, -MOVEMENT_STEP); // Move west
+});
+
+document.getElementById("east")!.addEventListener("click", () => {
+  updatePlayerPosition(0, MOVEMENT_STEP); // Move east
+});
