@@ -214,7 +214,7 @@ function generateCache(cell: Cell): Cache | null {
 function updatePopupCoinList(popupDiv: HTMLDivElement, coins: Coin[]) {
   const coinListDiv = popupDiv.querySelector("#coin-list")!;
   const coinList = coins
-    .map((coin) => `{i: ${coin.cell.i}, j: ${coin.cell.j}, #${coin.serial}}`)
+    .map((coin) => `i: ${coin.cell.i}, j: ${coin.cell.j}, #${coin.serial}`)
     .join("<br>");
   coinListDiv.innerHTML = coinList;
 }
