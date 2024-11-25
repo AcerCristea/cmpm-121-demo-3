@@ -383,7 +383,7 @@ function saveGameState() {
     movementHistory: movementHistory.map((latLng) => ({
       lat: latLng.lat,
       lng: latLng.lng,
-    })), // Save movement history
+    })),
   };
 
   localStorage.setItem(GAME_STATE_KEY, JSON.stringify(state));
