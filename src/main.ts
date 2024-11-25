@@ -44,25 +44,32 @@ class Cache implements Momento<string> {
 }
 
 // Constants
-const NULL_ISLAND = leaflet.latLng(0, 0); // Null Island at 0°N, 0°E
-const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504); // Oakes Classroom coordinates
+const NULL_ISLAND = leaflet.latLng(0, 0);
+const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 0.0001; // Size of each cell in degrees
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
-
+const INITIAL_LAT = 36.98949379578401;
+const INITIAL_LNG = -122.06277128548504;
 let playerPosition = OAKES_CLASSROOM; // Initaial starting position
+const GAME_STATE_KEY = "gameState";
 
 // ChatGPT helped come up with the idea of a CacheManager and how to implement it using a Momento interface
 
 class CacheManager {
-  private cacheStates: Map<string, string> = new Map(); // Stores cache states as mementos
-  private activeCaches: Map<string, Cache> = new Map(); // Active caches visible on the map
+  public cacheStates: Map<string, string> = new Map(); // Stores cache states as mementos
+  public activeCaches: Map<string, Cache> = new Map(); // Active caches visible on the map
 
   constructor(
     private readonly board: Board,
     private readonly map: leaflet.Map,
   ) {}
+
+  public getCellFromKey(key: string): Cell {
+    const [i, j] = key.split(",").map(Number);
+    return { i, j };
+  }
 
   // Get key for a cell
   private getCellKey(cell: Cell): string {
@@ -88,23 +95,23 @@ class CacheManager {
         const cell = this.board.getCanonicalCell({ i, j });
         const key = this.getCellKey(cell);
 
-        if (!this.activeCaches.has(key)) {
-          // Restore state if memento exists, otherwise generate a new cache
-          let cache: Cache | null = null;
-          if (this.cacheStates.has(key)) {
-            cache = new Cache(cell);
-            cache.fromMomento(this.cacheStates.get(key)!);
-          } else {
-            // Generate new cache
-            const generatedCache = generateCache(cell);
-            if (generatedCache) {
-              cache = new Cache(generatedCache.cell, generatedCache.coins);
-            }
-          }
-          if (cache) {
-            this.activeCaches.set(key, cache);
-            displayCacheOnMap(cache);
-          }
+        if (this.activeCaches.has(key)) continue;
+
+        // Restore from saved state if available
+        if (this.cacheStates.has(key)) {
+          const cache = new Cache(cell);
+          cache.fromMomento(this.cacheStates.get(key)!);
+          this.activeCaches.set(key, cache);
+          displayCacheOnMap(cache);
+          continue;
+        }
+
+        // Generate a new cache if no saved state exists
+        const generatedCache = generateCache(cell);
+        if (generatedCache) {
+          const cache = new Cache(generatedCache.cell, generatedCache.coins);
+          this.activeCaches.set(key, cache);
+          displayCacheOnMap(cache);
         }
       }
     }
@@ -194,8 +201,11 @@ playerMarker.addTo(map);
 const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 let playerCoins = 0;
 const statusPanel = document.getElementById("statusPanel")!;
-
 const cacheManager = new CacheManager(board, map);
+let movementHistory: leaflet.LatLng[] = [playerPosition];
+const movementPolyline = leaflet
+  .polyline(movementHistory, { color: "blue" })
+  .addTo(map);
 
 // Use luck function to determine cache generation and coin count
 function generateCache(cell: Cell): Cache | null {
@@ -248,7 +258,6 @@ function displayCacheOnMap(cache: Cache) {
 }
 
 // Cache Interaction
-
 function updateCoinUI(popupDiv: HTMLDivElement, cache: Cache) {
   const coinCountElement = popupDiv.querySelector("#coin-count");
   if (coinCountElement) {
@@ -267,6 +276,7 @@ function collectCoin(cache: Cache, popupDiv: HTMLDivElement) {
       }),
     );
     updateCoinUI(popupDiv, cache);
+    saveGameState();
   }
 }
 
@@ -280,6 +290,7 @@ function depositCoin(cache: Cache, popupDiv: HTMLDivElement) {
       }),
     );
     updateCoinUI(popupDiv, cache);
+    saveGameState();
   }
 }
 
@@ -299,35 +310,152 @@ document.addEventListener("player-inventory-changed", (e) => {
 // Movement step size (in degrees)
 const MOVEMENT_STEP = TILE_DEGREES;
 
-// Update the caches to spawn at playerPosition
-cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
-
 // Update player position and marker
-function updatePlayerPosition(latChange: number, lngChange: number) {
-  playerPosition = leaflet.latLng(
-    playerPosition.lat + latChange,
-    playerPosition.lng + lngChange,
-  );
+function updatePlayerPosition(
+  latChange: number,
+  lngChange: number,
+  isAbsolute: boolean = false,
+) {
+  if (isAbsolute) {
+    playerPosition = leaflet.latLng(latChange, lngChange);
+  } else {
+    playerPosition = leaflet.latLng(
+      playerPosition.lat + latChange,
+      playerPosition.lng + lngChange,
+    );
+  }
 
   playerMarker.setLatLng(playerPosition);
   map.panTo(playerPosition); // Keep the map centered on the player
 
+  movementHistory.push(playerPosition);
+  movementPolyline.setLatLngs(movementHistory); // Update the polyline path
+
   cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
+  saveGameState();
 }
 
 // Event listeners for directional buttons
 document.getElementById("north")!.addEventListener("click", () => {
-  updatePlayerPosition(MOVEMENT_STEP, 0); // Move north
+  updatePlayerPosition(MOVEMENT_STEP, 0, false); // Move north
 });
 
 document.getElementById("south")!.addEventListener("click", () => {
-  updatePlayerPosition(-MOVEMENT_STEP, 0); // Move south
+  updatePlayerPosition(-MOVEMENT_STEP, 0, false); // Move south
 });
 
 document.getElementById("west")!.addEventListener("click", () => {
-  updatePlayerPosition(0, -MOVEMENT_STEP); // Move west
+  updatePlayerPosition(0, -MOVEMENT_STEP, false); // Move west
 });
 
 document.getElementById("east")!.addEventListener("click", () => {
-  updatePlayerPosition(0, MOVEMENT_STEP); // Move east
+  updatePlayerPosition(0, MOVEMENT_STEP, false); // Move east
 });
+
+document.getElementById("sensor")!.addEventListener("click", () => {
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      playerPosition = leaflet.latLng(
+        position.coords.latitude,
+        position.coords.longitude,
+      );
+      playerMarker.setLatLng(playerPosition);
+      map.panTo(playerPosition);
+      cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
+      saveGameState();
+    },
+    (error) => {
+      console.error("Geolocation error:", error);
+    },
+  );
+});
+
+function saveGameState() {
+  const allCaches = new Map(cacheManager.cacheStates); // Start with saved caches
+  cacheManager.activeCaches.forEach((cache, key) => {
+    allCaches.set(key, cache.toMomento()); // Add active caches
+  });
+
+  const state = {
+    playerPosition: { lat: playerPosition.lat, lng: playerPosition.lng },
+    playerCoins,
+    cacheStates: Array.from(allCaches.entries()), // Save all caches
+    movementHistory: movementHistory.map((latLng) => ({
+      lat: latLng.lat,
+      lng: latLng.lng,
+    })), // Save movement history
+  };
+
+  localStorage.setItem(GAME_STATE_KEY, JSON.stringify(state));
+  console.log("Game state saved:", state);
+}
+
+// Function to load the game state
+function loadGameState() {
+  const savedState = localStorage.getItem(GAME_STATE_KEY);
+  if (!savedState) {
+    console.log("No saved game state found.");
+    return;
+  }
+
+  try {
+    const state = JSON.parse(savedState);
+    console.log("Loaded game state:", state);
+
+    // Restore player position
+    playerPosition = leaflet.latLng(
+      state.playerPosition.lat,
+      state.playerPosition.lng,
+    );
+    playerMarker.setLatLng(playerPosition);
+    map.panTo(playerPosition);
+
+    // Restore movement history
+    movementHistory = state.movementHistory.map(
+      (point: { lat: number; lng: number }) =>
+        leaflet.latLng(point.lat, point.lng),
+    );
+    movementPolyline.setLatLngs(movementHistory); // Restore the polyline path
+
+    // Restore player's coins
+    playerCoins = state.playerCoins;
+    document.dispatchEvent(
+      new CustomEvent("player-inventory-changed", {
+        detail: { coins: playerCoins },
+      }),
+    );
+
+    cacheManager.activeCaches.clear(); // Ensure old active caches are cleared before restoring new ones
+
+    // Restore saved cache states
+    cacheManager.cacheStates = new Map(state.cacheStates);
+
+    // Update visible caches for cells not covered by saved state
+    cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
+  } catch (error) {
+    console.error("Failed to load game state:", error);
+  }
+}
+
+document.getElementById("reset")!.addEventListener("click", () => {
+  if (prompt("Are you sure you want to reset? (yes / no)") === "yes") {
+    localStorage.clear();
+    playerCoins = 0;
+    document.dispatchEvent(
+      new CustomEvent("player-inventory-changed", {
+        detail: { coins: playerCoins },
+      }),
+    );
+    playerPosition = OAKES_CLASSROOM;
+
+    updatePlayerPosition(INITIAL_LAT, INITIAL_LNG, true);
+
+    movementHistory = [];
+    movementPolyline.setLatLngs([]);
+
+    cacheManager.cacheStates.clear();
+    cacheManager.activeCaches.clear();
+  }
+});
+
+loadGameState();
