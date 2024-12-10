@@ -21,6 +21,18 @@ interface Momento<T> {
   fromMomento(momento: T): void;
 }
 
+interface IBoard {
+  getCellForPoint(point: leaflet.LatLng): Cell;
+  getCanonicalCell(cell: Cell): Cell;
+  getCellBounds(cell: Cell): leaflet.LatLngBounds;
+}
+
+interface IMap {
+  panTo(latLng: leaflet.LatLng): void;
+  removeLayer(layer: leaflet.Layer): void;
+  eachLayer(callback: (layer: leaflet.Layer) => void): void;
+}
+
 class Cache implements Momento<string> {
   cell: Cell;
   coins: Coin[];
@@ -62,8 +74,8 @@ class CacheManager {
   public activeCaches: Map<string, Cache> = new Map(); // Active caches visible on the map
 
   constructor(
-    private readonly board: Board,
-    private readonly map: leaflet.Map,
+    private readonly board: IBoard,
+    private readonly map: IMap,
   ) {}
 
   public getCellFromKey(key: string): Cell {
@@ -143,7 +155,7 @@ class CacheManager {
   }
 }
 
-class Board {
+class Board implements IBoard {
   private readonly knownCells: Map<string, Cell> = new Map();
 
   constructor(
@@ -176,36 +188,67 @@ class Board {
   }
 }
 
+class LeafletMap implements IMap {
+  private mapInstance: leaflet.Map;
+
+  constructor(mapElementId: string, options: leaflet.MapOptions) {
+    this.mapInstance = leaflet.map(mapElementId, options); // Initialize map here
+  }
+
+  addTileLayer(url: string, options: leaflet.TileLayerOptions): void {
+    leaflet
+      .tileLayer(url, options)
+      .addTo(this.mapInstance);
+  }
+
+  panTo(latLng: leaflet.LatLng): void {
+    this.mapInstance.panTo(latLng);
+  }
+
+  removeLayer(layer: leaflet.Layer): void {
+    this.mapInstance.removeLayer(layer);
+  }
+
+  eachLayer(callback: (layer: leaflet.Layer) => void): void {
+    this.mapInstance.eachLayer(callback);
+  }
+
+  // Optional: Add a method to get the map instance if needed
+  getMapInstance(): leaflet.Map {
+    return this.mapInstance;
+  }
+}
+
 // Main game logic (map initialization, event listeners, cache management)
-const map = leaflet.map("map", {
+const mapOptions: leaflet.MapOptions = {
   center: playerPosition,
   zoom: GAMEPLAY_ZOOM_LEVEL,
   minZoom: 6,
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
   zoomControl: true,
   scrollWheelZoom: true,
-});
+};
 
-leaflet
-  .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: GAMEPLAY_ZOOM_LEVEL,
-    attribution:
-      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  })
-  .addTo(map);
+// Initialize LeafletMap with the map element ID and options
+const mapInstance = new LeafletMap("map", mapOptions);
+
+mapInstance.addTileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: GAMEPLAY_ZOOM_LEVEL,
+  attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+});
 
 const playerMarker = leaflet.marker(playerPosition);
 playerMarker.bindTooltip("You're Here!");
-playerMarker.addTo(map);
+playerMarker.addTo(mapInstance.getMapInstance()); // Use getMapInstance() if necessary
 
 const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 let playerCoins = 0;
 const statusPanel = document.getElementById("statusPanel")!;
-const cacheManager = new CacheManager(board, map);
+const cacheManager = new CacheManager(board, mapInstance);
 let movementHistory: leaflet.LatLng[] = [playerPosition];
 const movementPolyline = leaflet
   .polyline(movementHistory, { color: "blue" })
-  .addTo(map);
+  .addTo(mapInstance.getMapInstance());
 
 // Use luck function to determine cache generation and coin count
 function generateCache(cell: Cell): Cache | null {
@@ -232,7 +275,7 @@ function updatePopupCoinList(popupDiv: HTMLDivElement, coins: Coin[]) {
 // Displays a cache on the map with an interactive popup
 function displayCacheOnMap(cache: Cache) {
   const bounds = board.getCellBounds(cache.cell);
-  const rect = leaflet.rectangle(bounds).addTo(map);
+  const rect = leaflet.rectangle(bounds).addTo(mapInstance.getMapInstance());
 
   rect.bindPopup(() => {
     const popupDiv = document.createElement("div");
@@ -326,7 +369,7 @@ function updatePlayerPosition(
   }
 
   playerMarker.setLatLng(playerPosition);
-  map.panTo(playerPosition); // Keep the map centered on the player
+  mapInstance.panTo(playerPosition); // Keep the map centered on the player
 
   movementHistory.push(playerPosition);
   movementPolyline.setLatLngs(movementHistory); // Update the polyline path
@@ -360,7 +403,7 @@ document.getElementById("sensor")!.addEventListener("click", () => {
         position.coords.longitude,
       );
       playerMarker.setLatLng(playerPosition);
-      map.panTo(playerPosition);
+      mapInstance.panTo(playerPosition);
       cacheManager.updateVisibleCaches(playerPosition, NEIGHBORHOOD_SIZE);
       saveGameState();
     },
@@ -408,7 +451,7 @@ function loadGameState() {
       state.playerPosition.lng,
     );
     playerMarker.setLatLng(playerPosition);
-    map.panTo(playerPosition);
+    mapInstance.panTo(playerPosition);
 
     // Restore movement history
     movementHistory = state.movementHistory.map(
