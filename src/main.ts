@@ -73,10 +73,7 @@ class CacheManager {
   public cacheStates: Map<string, string> = new Map(); // Stores cache states as mementos
   public activeCaches: Map<string, Cache> = new Map(); // Active caches visible on the map
 
-  constructor(
-    private readonly board: IBoard,
-    private readonly map: IMap,
-  ) {}
+  constructor(private readonly board: IBoard, private readonly map: IMap) {}
 
   public getCellFromKey(key: string): Cell {
     const [i, j] = key.split(",").map(Number);
@@ -91,45 +88,71 @@ class CacheManager {
   // Regenerate caches near the player's position
   public updateVisibleCaches(
     playerPosition: leaflet.LatLng,
-    visibilityRadius: number,
+    visibilityRadius: number
   ) {
     const playerCell = this.board.getCellForPoint(playerPosition);
 
-    // Define bounds of visible cells
-    const minI = playerCell.i - visibilityRadius;
-    const maxI = playerCell.i + visibilityRadius;
-    const minJ = playerCell.j - visibilityRadius;
-    const maxJ = playerCell.j + visibilityRadius;
+    const { minI, maxI, minJ, maxJ } = this.calculateBounds(
+      playerCell,
+      visibilityRadius
+    );
 
-    // Iterate through visible cells
+    this.processVisibleCells(minI, maxI, minJ, maxJ);
+    this.removeOldCaches(minI, maxI, minJ, maxJ);
+  }
+
+  private calculateBounds(playerCell: Cell, visibilityRadius: number) {
+    return {
+      minI: playerCell.i - visibilityRadius,
+      maxI: playerCell.i + visibilityRadius,
+      minJ: playerCell.j - visibilityRadius,
+      maxJ: playerCell.j + visibilityRadius,
+    };
+  }
+
+  private processVisibleCells(
+    minI: number,
+    maxI: number,
+    minJ: number,
+    maxJ: number
+  ) {
     for (let i = minI; i <= maxI; i++) {
       for (let j = minJ; j <= maxJ; j++) {
         const cell = this.board.getCanonicalCell({ i, j });
         const key = this.getCellKey(cell);
-
         if (this.activeCaches.has(key)) continue;
-
-        // Restore from saved state if available
-        if (this.cacheStates.has(key)) {
-          const cache = new Cache(cell);
-          cache.fromMomento(this.cacheStates.get(key)!);
-          this.activeCaches.set(key, cache);
-          displayCacheOnMap(cache);
-          continue;
-        }
-
-        // Generate a new cache if no saved state exists
-        const generatedCache = generateCache(cell);
-        if (generatedCache) {
-          const cache = new Cache(generatedCache.cell, generatedCache.coins);
-          this.activeCaches.set(key, cache);
-          displayCacheOnMap(cache);
-        }
+        this.restoreCacheIfAvailable(cell, key) ||
+          this.generateCacheIfNeeded(cell, key);
       }
     }
+  }
 
-    // Had to ask chatGPT how to remove caches as they become not visible.
-    // Remove caches outside of the visibility radius
+  private restoreCacheIfAvailable(cell: Cell, key: string) {
+    if (this.cacheStates.has(key)) {
+      const cache = new Cache(cell);
+      cache.fromMomento(this.cacheStates.get(key)!);
+      this.activeCaches.set(key, cache);
+      displayCacheOnMap(cache);
+      return true; // Indicates cache was restored
+    }
+    return false; // No cache was restored
+  }
+
+  private generateCacheIfNeeded(cell: Cell, key: string) {
+    const generatedCache = generateCache(cell);
+    if (generatedCache) {
+      const cache = new Cache(generatedCache.cell, generatedCache.coins);
+      this.activeCaches.set(key, cache);
+      displayCacheOnMap(cache);
+    }
+  }
+
+  private removeOldCaches(
+    minI: number,
+    maxI: number,
+    minJ: number,
+    maxJ: number
+  ) {
     const cellsToRemove: string[] = [];
     this.activeCaches.forEach((cache, key) => {
       const { i, j } = cache.cell;
@@ -139,7 +162,6 @@ class CacheManager {
       }
     });
 
-    // Cleanup removed caches
     cellsToRemove.forEach((key) => {
       const cache = this.activeCaches.get(key);
       this.map.eachLayer((layer: leaflet.Layer) => {
@@ -160,7 +182,7 @@ class Board implements IBoard {
 
   constructor(
     private readonly tileWidth: number,
-    private readonly visibilityRadius: number,
+    private readonly visibilityRadius: number
   ) {}
 
   // Flyweight method to return a shared instance of a Cell
@@ -196,9 +218,7 @@ class LeafletMap implements IMap {
   }
 
   addTileLayer(url: string, options: leaflet.TileLayerOptions): void {
-    leaflet
-      .tileLayer(url, options)
-      .addTo(this.mapInstance);
+    leaflet.tileLayer(url, options).addTo(this.mapInstance);
   }
 
   panTo(latLng: leaflet.LatLng): void {
@@ -234,7 +254,8 @@ const mapInstance = new LeafletMap("map", mapOptions);
 
 mapInstance.addTileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  attribution:
+    '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 });
 
 const playerMarker = leaflet.marker(playerPosition);
@@ -316,7 +337,7 @@ function collectCoin(cache: Cache, popupDiv: HTMLDivElement) {
     document.dispatchEvent(
       new CustomEvent("player-inventory-changed", {
         detail: { coins: playerCoins },
-      }),
+      })
     );
     updateCoinUI(popupDiv, cache);
     saveGameState();
@@ -330,7 +351,7 @@ function depositCoin(cache: Cache, popupDiv: HTMLDivElement) {
     document.dispatchEvent(
       new CustomEvent("player-inventory-changed", {
         detail: { coins: playerCoins },
-      }),
+      })
     );
     updateCoinUI(popupDiv, cache);
     saveGameState();
@@ -357,14 +378,14 @@ const MOVEMENT_STEP = TILE_DEGREES;
 function updatePlayerPosition(
   latChange: number,
   lngChange: number,
-  isAbsolute: boolean = false,
+  isAbsolute: boolean = false
 ) {
   if (isAbsolute) {
     playerPosition = leaflet.latLng(latChange, lngChange);
   } else {
     playerPosition = leaflet.latLng(
       playerPosition.lat + latChange,
-      playerPosition.lng + lngChange,
+      playerPosition.lng + lngChange
     );
   }
 
@@ -400,7 +421,7 @@ document.getElementById("sensor")!.addEventListener("click", () => {
     (position) => {
       playerPosition = leaflet.latLng(
         position.coords.latitude,
-        position.coords.longitude,
+        position.coords.longitude
       );
       playerMarker.setLatLng(playerPosition);
       mapInstance.panTo(playerPosition);
@@ -409,7 +430,7 @@ document.getElementById("sensor")!.addEventListener("click", () => {
     },
     (error) => {
       console.error("Geolocation error:", error);
-    },
+    }
   );
 });
 
@@ -448,7 +469,7 @@ function loadGameState() {
     // Restore player position
     playerPosition = leaflet.latLng(
       state.playerPosition.lat,
-      state.playerPosition.lng,
+      state.playerPosition.lng
     );
     playerMarker.setLatLng(playerPosition);
     mapInstance.panTo(playerPosition);
@@ -456,7 +477,7 @@ function loadGameState() {
     // Restore movement history
     movementHistory = state.movementHistory.map(
       (point: { lat: number; lng: number }) =>
-        leaflet.latLng(point.lat, point.lng),
+        leaflet.latLng(point.lat, point.lng)
     );
     movementPolyline.setLatLngs(movementHistory); // Restore the polyline path
 
@@ -465,7 +486,7 @@ function loadGameState() {
     document.dispatchEvent(
       new CustomEvent("player-inventory-changed", {
         detail: { coins: playerCoins },
-      }),
+      })
     );
 
     cacheManager.activeCaches.clear(); // Ensure old active caches are cleared before restoring new ones
@@ -487,7 +508,7 @@ document.getElementById("reset")!.addEventListener("click", () => {
     document.dispatchEvent(
       new CustomEvent("player-inventory-changed", {
         detail: { coins: playerCoins },
-      }),
+      })
     );
     playerPosition = OAKES_CLASSROOM;
 
